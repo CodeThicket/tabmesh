@@ -1,0 +1,57 @@
+{
+  "name": "@tabmesh/core",
+  "version": "0.0.1",
+  "description": "Frontend event mesh for cross-tab coordination, leader election, and shared backend connections",
+  "keywords": [
+    "cross-tab",
+    "browser tabs",
+    "leader election",
+    "event mesh",
+    "broadcast channel",
+    "web locks",
+    "tab coordination"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    },
+    "./leader": {
+      "import": "./dist/leader/index.js",
+      "types": "./dist/leader/index.d.ts"
+    },
+    "./bus": {
+      "import": "./dist/bus/index.js",
+      "types": "./dist/bus/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc && vite build",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage"
+  },
+  "peerDependencies": {},
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.2.0",
+    "vite": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tabmesh/tabmesh.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://tabmesh.dev",
+  "bugs": "https://github.com/tabmesh/tabmesh/issues",
+  "author": "TabMesh Contributors",
+  "license": "MIT"
+}
