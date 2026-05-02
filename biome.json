@@ -30,7 +30,7 @@
   "javascript": {
     "formatter": {
       "quoteStyle": "single",
-      "trailingComma": "es5",
+      "trailingCommas": "es5",
       "semicolons": "always",
       "arrowParentheses": "always",
       "bracketSpacing": true
@@ -42,11 +42,6 @@
     }
   },
   "files": {
-    "ignore": [
-      "dist",
-      "node_modules",
-      "coverage",
-      ".git"
-    ]
+    "ignore": ["dist", "node_modules", "coverage", ".git"]
   }
 }

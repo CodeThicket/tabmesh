@@ -30,9 +30,7 @@
       "types": "./dist/bus/index.d.ts"
     }
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "sideEffects": false,
   "scripts": {
     "build": "tsc && vite build",
