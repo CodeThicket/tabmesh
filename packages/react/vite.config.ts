@@ -5,20 +5,23 @@ export default defineConfig({
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
-      name: 'TabMesh',
+      name: 'TabMeshReact',
       formats: ['es', 'cjs'],
       fileName: (format) => `index.${format === 'es' ? 'js' : 'cjs'}`,
     },
     rollupOptions: {
-      external: [],
+      external: ['react', 'react-dom', '@tabmesh/core'],
       output: {
-        globals: {},
+        globals: {
+          react: 'React',
+          'react-dom': 'ReactDOM',
+          '@tabmesh/core': 'TabMesh',
+        },
       },
     },
     sourcemap: true,
     minify: 'esbuild',
     outDir: 'dist',
-    emptyOutDir: false,
   },
   test: {
     globals: true,
