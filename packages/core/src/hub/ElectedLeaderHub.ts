@@ -47,6 +47,13 @@ export class ElectedLeaderHub implements Hub {
   private drainScheduled = false;
   private cleanupFns: (() => void)[] = [];
 
+  // Echo suppression: ids the leader forwarded to the transport. If the server
+  // bounces a message back with the same id, drop it so the originating tab
+  // does not see its own event a second time.
+  private readonly sentIds = new Map<string, number>();
+  private static readonly SENT_ID_TTL_MS = 60_000;
+  private static readonly SENT_ID_MAX = 1000;
+
   /** Batch window for outbox writes (ms). */
   private static readonly BATCH_WINDOW_MS = 50;
 
@@ -294,6 +301,7 @@ export class ElectedLeaderHub implements Hub {
           await this.transportManager.send(
             JSON.stringify({ type: entry.type, payload: entry.payload, id: entry.id })
           );
+          this.rememberSent(entry.id);
         } catch {
           transportSent = false;
           this.emitSystemEvent('event.delivery.failed', {
@@ -325,7 +333,11 @@ export class ElectedLeaderHub implements Hub {
 
   private onTransportMessage(data: string): void {
     try {
-      const parsed = JSON.parse(data) as { type: string; payload: unknown };
+      const parsed = JSON.parse(data) as { type: string; payload: unknown; id?: string };
+
+      // Drop server echoes of our own outbound events.
+      if (typeof parsed.id === 'string' && this.consumeIfSelf(parsed.id)) return;
+
       const event: TabMeshEvent = {
         type: parsed.type,
         payload: parsed.payload,
@@ -333,7 +345,7 @@ export class ElectedLeaderHub implements Hub {
         meta: {
           internalSource: 'transport',
           sourceTabId: '',
-          eventId: '',
+          eventId: parsed.id ?? '',
           createdAt: Date.now(),
         },
       };
@@ -345,6 +357,26 @@ export class ElectedLeaderHub implements Hub {
     } catch {
       // Malformed transport message — ignore
     }
+  }
+
+  private rememberSent(id: string): void {
+    if (!id) return;
+    this.sentIds.set(id, Date.now() + ElectedLeaderHub.SENT_ID_TTL_MS);
+    if (this.sentIds.size > ElectedLeaderHub.SENT_ID_MAX) {
+      const now = Date.now();
+      for (const [k, exp] of this.sentIds) {
+        if (exp < now) this.sentIds.delete(k);
+        if (this.sentIds.size <= ElectedLeaderHub.SENT_ID_MAX) break;
+      }
+    }
+  }
+
+  private consumeIfSelf(id: string): boolean {
+    if (!id) return false;
+    const exp = this.sentIds.get(id);
+    if (exp == null) return false;
+    this.sentIds.delete(id);
+    return exp >= Date.now();
   }
 
   // ---------------------------------------------------------------------------
