@@ -65,6 +65,33 @@ const RECONNECT_INITIAL_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
 const RECONNECT_MULTIPLIER = 2;
 
+// Echo suppression: ids we forwarded to the transport. If the server bounces a
+// message back with the same id, drop it so the originating tab does not see
+// its own event a second time as `source: 'remote'`.
+const sentIds = new Map<string, number>();
+const SENT_ID_TTL_MS = 60_000;
+const SENT_ID_MAX = 1000;
+
+function rememberSent(id: string): void {
+  if (!id) return;
+  sentIds.set(id, Date.now() + SENT_ID_TTL_MS);
+  if (sentIds.size > SENT_ID_MAX) {
+    const now = Date.now();
+    for (const [k, exp] of sentIds) {
+      if (exp < now) sentIds.delete(k);
+      if (sentIds.size <= SENT_ID_MAX) break;
+    }
+  }
+}
+
+function consumeIfSelf(id: string): boolean {
+  if (!id) return false;
+  const exp = sentIds.get(id);
+  if (exp == null) return false;
+  sentIds.delete(id);
+  return exp >= Date.now();
+}
+
 // ---------------------------------------------------------------------------
 // Connection handling
 // ---------------------------------------------------------------------------
@@ -261,6 +288,7 @@ async function drain(): Promise<void> {
         if (ws && wsConnected) {
           try {
             ws.send(JSON.stringify({ type: entry.type, payload: entry.payload, id: entry.id }));
+            rememberSent(entry.id);
           } catch {
             transportOk = false;
             emitSystemEvent('event.delivery.failed', {
@@ -436,6 +464,9 @@ function onTransportMessage(data: string): void {
     return;
   }
   if (typeof parsed?.type !== 'string') return;
+
+  // Drop server echoes of our own outbound events.
+  if (typeof parsed.id === 'string' && consumeIfSelf(parsed.id)) return;
 
   const event: TabMeshEvent = {
     type: parsed.type,
