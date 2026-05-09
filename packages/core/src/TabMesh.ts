@@ -46,6 +46,9 @@ import type {
   Unsubscribe,
 } from './types.js';
 
+/** Short deadline for the stop()-time outbox flush. */
+const STOP_FLUSH_TIMEOUT_MS = 500;
+
 /**
  * TabMesh is the main entry point for the library.
  *
@@ -74,6 +77,9 @@ export class TabMesh {
 
   /** Service Worker client for background sync. */
   private swClient: ServiceWorkerClient | null = null;
+
+  /** Optional session tags set via {@link setSession}. */
+  private session: { userId?: string; tenantId?: string; sessionId?: string } = {};
 
   constructor(config: TabMeshConfig) {
     this.config = config;
@@ -121,16 +127,24 @@ export class TabMesh {
       }, 10_000);
     }
 
-    // Register Service Worker if configured
-    if (this.config.serviceWorker?.enabled) {
+    // Register Service Worker if configured. Skip in degraded mode — without
+    // IndexedDB, the SW has no outbox to drain, so registration buys nothing.
+    if (this.config.serviceWorker?.enabled && !this.degraded) {
       this.swClient = new ServiceWorkerClient(this.config.channelName, this.config.serviceWorker);
       // Non-blocking — registration failure is non-fatal
       this.swClient.register().catch(() => {});
     }
 
-    // Listen for visibility changes
+    // Listen for the full set of lifecycle events the Hub cares about.
+    // CONTEXT.md asks for visibility, pagehide, pageshow, freeze, resume.
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pagehide', this.handlePageHide);
+      window.addEventListener('pageshow', this.handlePageShow);
+      window.addEventListener('freeze', this.handleFreeze as EventListener);
+      window.addEventListener('resume', this.handleResume as EventListener);
     }
 
     // Emit hub connected system event
@@ -173,6 +187,19 @@ export class TabMesh {
 
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    }
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('pagehide', this.handlePageHide);
+      window.removeEventListener('pageshow', this.handlePageShow);
+      window.removeEventListener('freeze', this.handleFreeze as EventListener);
+      window.removeEventListener('resume', this.handleResume as EventListener);
+    }
+
+    // Best-effort flush of pending outbox events with a short deadline.
+    // CONTEXT.md: "stop() ... flushes pending Outbox events (with a short
+    // timeout). Does not clear the Outbox — stale events expire via TTL."
+    if (this.hub?.flush) {
+      await this.hub.flush(STOP_FLUSH_TIMEOUT_MS).catch(() => {});
     }
 
     // Request background sync before disconnecting hub
@@ -306,6 +333,44 @@ export class TabMesh {
   }
 
   /**
+   * Disconnect the transport without tearing down the rest of the mesh.
+   * Use this in the logout sequence so a stale auth token can't be replayed:
+   *
+   *   await mesh.clearOutbox();
+   *   await mesh.disconnectTransport();
+   *   mesh.broadcast({ type: 'auth.logout', payload: {} });
+   *   await mesh.stop();
+   */
+  async disconnectTransport(): Promise<void> {
+    if (
+      this.hub &&
+      typeof (this.hub as Hub & { disconnectTransport?: () => Promise<void> })
+        .disconnectTransport === 'function'
+    ) {
+      await (this.hub as Hub & { disconnectTransport: () => Promise<void> }).disconnectTransport();
+    }
+    this.transportState = 'disconnected';
+  }
+
+  /**
+   * Tag the mesh with session identity. Recommended for apps that share an
+   * origin across logins — this lets the channel name carry tenant/user IDs
+   * so events from a previous session can't leak into the next.
+   *
+   * Currently a no-op beyond stashing the values for observability; the spec
+   * leaves it to apps to incorporate the session into `channelName` directly.
+   * Provided so the documented logout flow compiles unmodified.
+   */
+  setSession(session: { userId?: string; tenantId?: string; sessionId?: string }): void {
+    this.session = { ...session };
+  }
+
+  /** Read back the session tags set via {@link setSession}. */
+  getSession(): { userId?: string; tenantId?: string; sessionId?: string } {
+    return { ...this.session };
+  }
+
+  /**
    * Get the current status of the mesh.
    */
   getStatus(): TabMeshStatus {
@@ -328,7 +393,11 @@ export class TabMesh {
     // Try SharedWorker first
     if (typeof SharedWorker !== 'undefined') {
       this.hubMode = 'shared-worker';
-      return new SharedWorkerHub(this.config.channelName);
+      return new SharedWorkerHub(
+        this.config.channelName,
+        this.config.workerUrl,
+        this.config.transport
+      );
     }
 
     // Fallback to Elected Leader
@@ -382,7 +451,17 @@ export class TabMesh {
         this.transportState = 'reconnecting';
         break;
       case 'storage.degraded':
-        this.degraded = true;
+        if (!this.degraded) {
+          this.degraded = true;
+          // CONTEXT.md degraded mode: log a warning so apps notice the
+          // durability downgrade.
+          console.warn(
+            '[tabmesh] storage.degraded — IndexedDB unavailable, falling back to in-memory queue. Events will not survive tab close.'
+          );
+          // Disable any pending Service Worker handoff — there's no IDB
+          // for the SW to drain, so registration adds nothing.
+          this.swClient = null;
+        }
         break;
     }
 
@@ -394,6 +473,30 @@ export class TabMesh {
     if (this.hub instanceof SharedWorkerHub) {
       const state = document.visibilityState === 'visible' ? 'visible' : 'hidden';
       this.hub.sendLifecycle(state);
+    }
+  };
+
+  private handlePageHide = (): void => {
+    if (this.hub instanceof SharedWorkerHub) {
+      this.hub.sendLifecycle('hidden');
+    }
+  };
+
+  private handlePageShow = (): void => {
+    if (this.hub instanceof SharedWorkerHub) {
+      this.hub.sendLifecycle('visible');
+    }
+  };
+
+  private handleFreeze = (): void => {
+    if (this.hub instanceof SharedWorkerHub) {
+      this.hub.sendLifecycle('frozen');
+    }
+  };
+
+  private handleResume = (): void => {
+    if (this.hub instanceof SharedWorkerHub) {
+      this.hub.sendLifecycle('visible');
     }
   };
 }

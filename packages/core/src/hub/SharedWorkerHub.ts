@@ -8,7 +8,14 @@
  * Eliminates leader election, split-brain, and interregnum by design.
  */
 
-import type { Hub, HubMessage, OutboxEntry, TabMeshEvent } from '../types.js';
+import type {
+  Hub,
+  HubMessage,
+  OutboxEntry,
+  TabMeshEvent,
+  Transport,
+  WorkerTransportConfig,
+} from '../types.js';
 import { PROTOCOL_VERSION } from '../types.js';
 
 /**
@@ -23,14 +30,16 @@ export class SharedWorkerHub implements Hub {
   private _connected = false;
   private readonly channelName: string;
   private readonly workerUrl: string;
+  private readonly workerTransportConfig: WorkerTransportConfig | null;
   private tabId: string | null = null;
 
   // Pending submit promises awaiting outbox-write-ack
   private pendingSubmits = new Map<string, { resolve: () => void; reject: (err: Error) => void }>();
 
-  constructor(channelName: string, workerUrl?: string) {
+  constructor(channelName: string, workerUrl?: string, transport?: Transport) {
     this.channelName = channelName;
     this.workerUrl = workerUrl ?? '/tabmesh-worker.js';
+    this.workerTransportConfig = transport?.getWorkerConfig?.() ?? null;
   }
 
   get connected(): boolean {
@@ -53,9 +62,19 @@ export class SharedWorkerHub implements Hub {
 
     // Perform handshake
     await this.handshake(tabId);
+
+    // Hand the worker our transport descriptor so it can own the connection.
+    // The worker ignores duplicate configs from later tabs.
+    if (this.workerTransportConfig && this.port) {
+      this.port.postMessage({
+        kind: 'transport-config',
+        config: this.workerTransportConfig,
+      } satisfies HubMessage);
+    }
   }
 
   async disconnect(): Promise<void> {
+    const wasConnected = this._connected;
     this._connected = false;
     if (this.port) {
       this.port.close();
@@ -68,6 +87,22 @@ export class SharedWorkerHub implements Hub {
       pending.reject(new Error('Hub disconnected'));
     }
     this.pendingSubmits.clear();
+
+    // Mirror ElectedLeaderHub: surface the lifecycle change as a system event
+    // so apps and the TabMesh status table see a consistent transition.
+    if (wasConnected) {
+      this.systemEventHandler?.({
+        type: 'hub.disconnected',
+        payload: { tabId: this.tabId ?? '' },
+        source: 'local',
+        meta: {
+          internalSource: 'port',
+          sourceTabId: this.tabId ?? '',
+          eventId: '',
+          createdAt: Date.now(),
+        },
+      });
+    }
   }
 
   async submit(entry: OutboxEntry): Promise<void> {
@@ -119,6 +154,21 @@ export class SharedWorkerHub implements Hub {
 
   onSystemEvent(handler: (event: TabMeshEvent) => void): void {
     this.systemEventHandler = handler;
+  }
+
+  async disconnectTransport(): Promise<void> {
+    if (this.port && this._connected) {
+      this.port.postMessage({ kind: 'transport-disconnect' } satisfies HubMessage);
+    }
+  }
+
+  async flush(timeoutMs: number): Promise<void> {
+    // Ask the worker to drain immediately and wait up to timeoutMs. The
+    // worker is fire-and-forget for outbox-flush, so we just nudge it and
+    // sleep — there is no per-tab ack for "drain complete."
+    if (!this.port || !this._connected) return;
+    this.port.postMessage({ kind: 'outbox-flush' } satisfies HubMessage);
+    await new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
   }
 
   /** Send a lifecycle update to the hub. */
@@ -183,6 +233,7 @@ export class SharedWorkerHub implements Hub {
         kind: 'handshake',
         tabId,
         protocolVersion: PROTOCOL_VERSION,
+        channelName: this.channelName,
       } satisfies HubMessage);
     });
   }

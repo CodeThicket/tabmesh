@@ -118,7 +118,26 @@ export interface Transport {
   onDisconnect: (() => void) | null;
   /** Called on transport-level errors. */
   onError: ((error: Error) => void) | null;
+
+  /**
+   * Optional. When the SharedWorker hub is selected, the worker — not the
+   * tab — owns the connection. Adapters that can be opened inside a Worker
+   * return a serialisable description here so the SharedWorker can rebuild
+   * an equivalent connection. Returning `null` (or omitting the method)
+   * means this adapter only works in elected-leader mode.
+   */
+  getWorkerConfig?(): WorkerTransportConfig | null;
 }
+
+/**
+ * Serialisable transport descriptor handed to the SharedWorker.
+ * Only WebSocket is built into the worker for v1.
+ */
+export type WorkerTransportConfig = {
+  kind: 'websocket';
+  url: string;
+  protocols?: string | string[];
+};
 
 // ---------------------------------------------------------------------------
 // Hub
@@ -138,7 +157,7 @@ export interface TabRegistryEntry {
  * Messages sent between tabs and the Hub over MessagePort or BroadcastChannel.
  */
 export type HubMessage =
-  | { kind: 'handshake'; tabId: string; protocolVersion: number }
+  | { kind: 'handshake'; tabId: string; protocolVersion: number; channelName: string }
   | { kind: 'handshake-ack'; accepted: boolean; reason?: string }
   | { kind: 'event'; event: TabMeshEvent }
   | { kind: 'outbox-write'; entry: OutboxEntry }
@@ -151,7 +170,9 @@ export type HubMessage =
   | { kind: 'pong'; tabId: string }
   | { kind: 'lifecycle'; tabId: string; state: TabVisibilityState }
   | { kind: 'leader-elected'; tabId: string; term: number }
-  | { kind: 'system-event'; event: TabMeshEvent };
+  | { kind: 'system-event'; event: TabMeshEvent }
+  | { kind: 'transport-config'; config: WorkerTransportConfig }
+  | { kind: 'transport-disconnect' };
 
 /**
  * The abstraction boundary between TabMesh and the hub implementation.
@@ -174,6 +195,19 @@ export interface Hub {
   onSystemEvent(handler: (event: TabMeshEvent) => void): void;
   /** Whether this tab is currently connected to the hub. */
   readonly connected: boolean;
+  /**
+   * Tear down the backend transport without disconnecting from the hub.
+   * Used during the logout flow so a stale auth token can't be replayed.
+   * Optional — hubs that don't own a transport may omit this.
+   */
+  disconnectTransport?(): Promise<void>;
+
+  /**
+   * Best-effort drain of pending outbox events before disconnect. Called
+   * from {@link TabMesh.stop} with a short deadline; the hub should
+   * resolve when it has either drained or hit the deadline.
+   */
+  flush?(timeoutMs: number): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +281,12 @@ export interface TabMeshConfig {
 
   /** Optional transport for backend communication. */
   transport?: Transport;
+
+  /**
+   * URL of the SharedWorker script. Used only when the SharedWorker hub
+   * is selected. Defaults to `/tabmesh-worker.js`.
+   */
+  workerUrl?: string;
 
   /** Leader election configuration (used only in fallback mode). */
   leader?: Partial<LeaderConfig>;

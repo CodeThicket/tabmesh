@@ -198,4 +198,16 @@ describe('WebSocketTransport', () => {
     ws?._simulateError('unexpected error');
     expect(onError).toHaveBeenCalled();
   });
+
+  it('exposes a serialisable worker config for SharedWorker mode', () => {
+    const transport = new WebSocketTransport({
+      url: 'wss://example.com/ws',
+      protocols: ['proto-1'],
+    });
+    expect(transport.getWorkerConfig()).toEqual({
+      kind: 'websocket',
+      url: 'wss://example.com/ws',
+      protocols: ['proto-1'],
+    });
+  });
 });

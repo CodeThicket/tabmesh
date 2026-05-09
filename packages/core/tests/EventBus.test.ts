@@ -160,8 +160,8 @@ describe('EventBus', () => {
     bus.broadcastAndDispatchLocally({ kind: 'pong', tabId: 'test' });
 
     expect(received).toHaveLength(2);
-    expect(received[0]!.kind).toBe('ping');
-    expect(received[1]!.kind).toBe('pong');
+    expect(received[0]?.kind).toBe('ping');
+    expect(received[1]?.kind).toBe('pong');
 
     bus.close();
   });

@@ -47,6 +47,7 @@ export type {
   Transport,
   TransportState,
   Unsubscribe,
+  WorkerTransportConfig,
 } from './types.js';
 export { PROTOCOL_VERSION } from './types.js';
 

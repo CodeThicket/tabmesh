@@ -6,7 +6,7 @@
  * Reconnection is owned by the Hub / TransportManager, not the Transport.
  */
 
-import type { Transport } from '@tabmesh/core';
+import type { Transport, WorkerTransportConfig } from '@tabmesh/core';
 
 /** Configuration for the WebSocket transport. */
 export interface WebSocketTransportConfig {
@@ -87,5 +87,13 @@ export class WebSocketTransport implements Transport {
       throw new Error('WebSocket is not connected');
     }
     this.ws.send(data);
+  }
+
+  getWorkerConfig(): WorkerTransportConfig {
+    return {
+      kind: 'websocket',
+      url: this.config.url,
+      protocols: this.config.protocols,
+    };
   }
 }

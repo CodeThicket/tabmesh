@@ -141,7 +141,7 @@ describe('TabMesh', () => {
 
     // The buffered event should have been submitted
     expect(mockHub._submitted).toHaveLength(1);
-    expect(mockHub._submitted[0]!.type).toBe('pre-start');
+    expect(mockHub._submitted[0]?.type).toBe('pre-start');
 
     await mesh.stop();
   });
@@ -155,9 +155,9 @@ describe('TabMesh', () => {
     await mesh.send({ type: 'chat.message', payload: { text: 'Hi' } });
 
     expect(mockHub._submitted).toHaveLength(1);
-    expect(mockHub._submitted[0]!.type).toBe('chat.message');
-    expect(mockHub._submitted[0]!.payload).toEqual({ text: 'Hi' });
-    expect(mockHub._submitted[0]!.status).toBe('pending');
+    expect(mockHub._submitted[0]?.type).toBe('chat.message');
+    expect(mockHub._submitted[0]?.payload).toEqual({ text: 'Hi' });
+    expect(mockHub._submitted[0]?.status).toBe('pending');
 
     await mesh.stop();
   });
@@ -209,7 +209,7 @@ describe('TabMesh', () => {
     mockHub._emitEvent(event);
 
     expect(received).toHaveLength(1);
-    expect(received[0]!.payload).toEqual({ text: 'Hello' });
+    expect(received[0]?.payload).toEqual({ text: 'Hello' });
 
     await mesh.stop();
   });
@@ -352,13 +352,13 @@ describe('TabMesh', () => {
     expect(ids).toHaveLength(3);
 
     // All IDs should have the same tab prefix
-    const prefix = ids[0]!.split('-')[0];
+    const prefix = ids[0]?.split('-')[0];
     for (const id of ids) {
-      expect(id!.startsWith(`${prefix}-`)).toBe(true);
+      expect(id?.startsWith(`${prefix}-`)).toBe(true);
     }
 
     // Counters should be monotonically increasing
-    const counters = ids.map((id) => Number.parseInt(id!.split('-')[1]!, 10));
+    const counters = ids.map((id) => Number.parseInt(id?.split('-')[1]!, 10));
     expect(counters[1]! > counters[0]!).toBe(true);
     expect(counters[2]! > counters[1]!).toBe(true);
 
@@ -426,13 +426,118 @@ describe('TabMesh', () => {
 
     // Should be dispatched locally
     expect(received).toHaveLength(1);
-    expect(received[0]!.type).toBe('auth.logout');
-    expect(received[0]!.source).toBe('local');
+    expect(received[0]?.type).toBe('auth.logout');
+    expect(received[0]?.source).toBe('local');
 
     // Should be sent to other tabs via hub
     expect(mockHub._broadcasted).toHaveLength(1);
-    expect(mockHub._broadcasted[0]!.type).toBe('auth.logout');
+    expect(mockHub._broadcasted[0]?.type).toBe('auth.logout');
 
     await mesh.stop();
+  });
+
+  it('exposes setSession / getSession for the documented logout flow', () => {
+    const mesh = new TabMesh({ channelName: 't:session' });
+    expect(mesh.getSession()).toEqual({});
+    mesh.setSession({ userId: 'u1', tenantId: 't1', sessionId: 's1' });
+    expect(mesh.getSession()).toEqual({ userId: 'u1', tenantId: 't1', sessionId: 's1' });
+  });
+
+  it('logs a console warning and degrades when storage.degraded fires', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const mockHub = createMockHub();
+    const mesh = new TabMesh({ channelName: 't:degraded' });
+    // Wire the hub's system-event channel into TabMesh manually since we
+    // bypass start() in this test (no real SharedWorker available).
+    mockHub.onSystemEvent((event) =>
+      (mesh as unknown as { handleSystemEvent: (e: TabMeshEvent) => void }).handleSystemEvent(event)
+    );
+    (mesh as unknown as { hub: Hub }).hub = mockHub;
+    (mesh as unknown as { started: boolean }).started = true;
+
+    mockHub._emitSystemEvent({
+      type: 'storage.degraded',
+      payload: { reason: 'indexeddb_unavailable' },
+      source: 'local',
+      meta: { internalSource: 'broadcast', sourceTabId: '', eventId: '', createdAt: 0 },
+    });
+
+    expect(mesh.getStatus().degraded).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('storage.degraded'));
+  });
+
+  it('stop() asks the hub to flush before disconnect', async () => {
+    const mockHub = createMockHub();
+    let flushed = false;
+    (mockHub as unknown as { flush: (ms: number) => Promise<void> }).flush = async () => {
+      flushed = true;
+    };
+    const mesh = new TabMesh({ channelName: 't:stop-flush' });
+    (mesh as unknown as { hub: Hub }).hub = mockHub;
+    (mesh as unknown as { started: boolean }).started = true;
+    (mockHub as unknown as { _connected: boolean })._connected = true;
+
+    await mesh.stop();
+    expect(flushed).toBe(true);
+  });
+
+  it('disconnectTransport delegates to hub.disconnectTransport when available', async () => {
+    const mockHub = createMockHub();
+    let transportClosed = false;
+    (mockHub as unknown as { disconnectTransport: () => Promise<void> }).disconnectTransport =
+      async () => {
+        transportClosed = true;
+      };
+    const mesh = new TabMesh({ channelName: 't:disconnect' });
+    (mesh as unknown as { hub: Hub }).hub = mockHub;
+    (mesh as unknown as { started: boolean }).started = true;
+
+    await mesh.disconnectTransport();
+    expect(transportClosed).toBe(true);
+    expect(mesh.getStatus().transportState).toBe('disconnected');
+  });
+
+  it('logout sequence runs clearOutbox → disconnectTransport → broadcast → stop', async () => {
+    const mockHub = createMockHub();
+    const order: string[] = [];
+    const realClear = mockHub.clearOutbox.bind(mockHub);
+    mockHub.clearOutbox = async () => {
+      order.push('clear');
+      await realClear();
+    };
+    (mockHub as unknown as { disconnectTransport: () => Promise<void> }).disconnectTransport =
+      async () => {
+        order.push('disconnectTransport');
+      };
+    (mockHub as unknown as { flush: (ms: number) => Promise<void> }).flush = async () => {
+      order.push('flush');
+    };
+    const realDisconnect = mockHub.disconnect.bind(mockHub);
+    mockHub.disconnect = async () => {
+      order.push('disconnect');
+      await realDisconnect();
+    };
+    const realBroadcast = mockHub.broadcastToTabs.bind(mockHub);
+    mockHub.broadcastToTabs = (event) => {
+      order.push(`broadcast:${event.type}`);
+      realBroadcast(event);
+    };
+
+    const mesh = new TabMesh({ channelName: 't:logout' });
+    vi.spyOn(mesh as unknown as { createHub(): Hub }, 'createHub').mockReturnValue(mockHub);
+    await mesh.start();
+
+    await mesh.clearOutbox();
+    await mesh.disconnectTransport();
+    mesh.broadcast({ type: 'auth.logout', payload: {} });
+    await mesh.stop();
+
+    expect(order).toEqual([
+      'clear',
+      'disconnectTransport',
+      'broadcast:auth.logout',
+      'flush',
+      'disconnect',
+    ]);
   });
 });

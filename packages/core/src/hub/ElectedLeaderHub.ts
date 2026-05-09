@@ -180,6 +180,27 @@ export class ElectedLeaderHub implements Hub {
     this.systemEventHandler = handler;
   }
 
+  async disconnectTransport(): Promise<void> {
+    if (this.transportManager) {
+      await this.transportManager.disconnect();
+      this.transportManager = null;
+      this.emitSystemEvent('transport.disconnected', { reason: 'explicit' });
+    }
+  }
+
+  async flush(timeoutMs: number): Promise<void> {
+    // If we are the leader, drain immediately; otherwise nudge the leader
+    // via BroadcastChannel and give it a brief window to finish.
+    if (this.leader?.leader) {
+      await Promise.race([this.drain(), new Promise((r) => setTimeout(r, timeoutMs))]);
+      return;
+    }
+    if (this.bus?.isOpen) {
+      this.bus.broadcast({ kind: 'outbox-flush' });
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
+  }
+
   // ---------------------------------------------------------------------------
   // Leader election callbacks
   // ---------------------------------------------------------------------------
@@ -248,8 +269,8 @@ export class ElectedLeaderHub implements Hub {
     if (!this.outbox || !this.leader?.leader) return;
 
     const pending = await this.outbox.readPending();
-    if (pending.length === 0) return;
-
+    // Always fall through so `markDeliveredAndCleanup` runs the cleanup
+    // pass even when there is nothing new to send (idle stop()).
     const deliveredIds: string[] = [];
 
     for (const entry of pending) {
@@ -293,10 +314,9 @@ export class ElectedLeaderHub implements Hub {
       }
     }
 
-    // Mark delivered and cleanup in one pass
-    if (deliveredIds.length > 0) {
-      await this.outbox.markDeliveredAndCleanup(deliveredIds);
-    }
+    // Always run the cleanup transaction — it reclaims previously-delivered
+    // and TTL-expired entries, even when nothing new was just sent.
+    await this.outbox.markDeliveredAndCleanup(deliveredIds);
   }
 
   // ---------------------------------------------------------------------------

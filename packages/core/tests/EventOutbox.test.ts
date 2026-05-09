@@ -41,9 +41,9 @@ describe('EventOutbox', () => {
 
     const pending = await outbox.readPending();
     expect(pending).toHaveLength(1);
-    expect(pending[0]!.id).toBe('tab1-1');
-    expect(pending[0]!.type).toBe('test.event');
-    expect(pending[0]!.status).toBe('pending');
+    expect(pending[0]?.id).toBe('tab1-1');
+    expect(pending[0]?.type).toBe('test.event');
+    expect(pending[0]?.status).toBe('pending');
   });
 
   it('should return pending events sorted by priority desc then createdAt asc', async () => {
@@ -64,7 +64,7 @@ describe('EventOutbox', () => {
 
     const pending = await outbox.readPending();
     expect(pending).toHaveLength(1);
-    expect(pending[0]!.id).toBe('valid');
+    expect(pending[0]?.id).toBe('valid');
   });
 
   it('should mark events as delivered and clean up', async () => {
@@ -76,7 +76,7 @@ describe('EventOutbox', () => {
 
     const pending = await outbox.readPending();
     expect(pending).toHaveLength(1);
-    expect(pending[0]!.id).toBe('e3');
+    expect(pending[0]?.id).toBe('e3');
   });
 
   it('should update status of a single entry', async () => {
@@ -109,6 +109,20 @@ describe('EventOutbox', () => {
     await outbox.updateStatus('nonexistent', 'delivered');
     // Should not throw
   });
+
+  it('cleans up TTL-expired entries on idle markDeliveredAndCleanup([])', async () => {
+    const past = Date.now() - 10_000;
+    await outbox.put(createEntry({ id: 'expired-1', createdAt: past, expiresAt: past + 1000 }));
+    await outbox.put(createEntry({ id: 'valid' }));
+
+    // Empty deliveredIds — this is the path stop()'s flush takes when the
+    // queue had nothing new to send. CONTEXT.md still wants TTL-expired
+    // pending entries reclaimed in the same transaction.
+    await outbox.markDeliveredAndCleanup([]);
+
+    const remaining = await outbox.count();
+    expect(remaining).toBe(1);
+  });
 });
 
 describe('EventOutbox — degraded mode (in-memory)', () => {
@@ -135,8 +149,8 @@ describe('EventOutbox — degraded mode (in-memory)', () => {
     await outbox.put(createEntry({ id: 'high', priority: 10, createdAt: now }));
 
     const pending = await outbox.readPending();
-    expect(pending[0]!.id).toBe('high');
-    expect(pending[1]!.id).toBe('low');
+    expect(pending[0]?.id).toBe('high');
+    expect(pending[1]?.id).toBe('low');
   });
 
   it('should mark delivered and cleanup in memory', async () => {
@@ -147,7 +161,7 @@ describe('EventOutbox — degraded mode (in-memory)', () => {
 
     const pending = await outbox.readPending();
     expect(pending).toHaveLength(1);
-    expect(pending[0]!.id).toBe('e2');
+    expect(pending[0]?.id).toBe('e2');
   });
 
   it('should clear memory queue', async () => {
@@ -177,6 +191,6 @@ describe('EventOutbox — degraded mode (in-memory)', () => {
 
     const pending = await outbox.readPending();
     expect(pending).toHaveLength(1);
-    expect(pending[0]!.id).toBe('valid');
+    expect(pending[0]?.id).toBe('valid');
   });
 });
