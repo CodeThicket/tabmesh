@@ -28,12 +28,25 @@
     "./bus": {
       "import": "./dist/bus/index.js",
       "types": "./dist/bus/index.d.ts"
+    },
+    "./storage": {
+      "import": "./dist/storage/index.js",
+      "types": "./dist/storage/index.d.ts"
+    },
+    "./transport": {
+      "import": "./dist/transport/index.js",
+      "types": "./dist/transport/index.d.ts"
+    },
+    "./service-worker": {
+      "import": "./dist/service-worker/index.js",
+      "types": "./dist/service-worker/index.d.ts"
     }
   },
   "files": ["dist"],
   "sideEffects": false,
   "scripts": {
-    "build": "tsc && vite build",
+    "build": "rm -rf dist tsconfig.tsbuildinfo && tsc && vite build",
+    "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:coverage": "vitest --coverage"
   },

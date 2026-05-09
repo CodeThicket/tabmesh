@@ -5,20 +5,16 @@ export default defineConfig({
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
-      name: 'TabMesh',
+      name: 'TabMeshTransportWebSocket',
       formats: ['es', 'cjs'],
       fileName: (format) => `index.${format === 'es' ? 'js' : 'cjs'}`,
     },
     rollupOptions: {
-      external: [],
-      output: {
-        globals: {},
-      },
+      external: ['@tabmesh/core'],
     },
     sourcemap: true,
     minify: 'esbuild',
     outDir: 'dist',
-    emptyOutDir: false,
   },
   test: {
     globals: true,

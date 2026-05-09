@@ -12,7 +12,8 @@
       },
       "style": {
         "useImportType": "error",
-        "useNodejsImportProtocol": "error"
+        "useNodejsImportProtocol": "error",
+        "noNonNullAssertion": "warn"
       },
       "complexity": {
         "noForEach": "warn"
@@ -42,6 +43,12 @@
     }
   },
   "files": {
-    "ignore": ["dist", "node_modules", "coverage", ".git"]
+    "ignore": [
+      "dist",
+      "node_modules",
+      "coverage",
+      ".git",
+      "packages/playground/public/tabmesh-worker.js"
+    ]
   }
 }
