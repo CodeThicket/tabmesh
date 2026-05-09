@@ -299,6 +299,9 @@
     });
     const response = { kind: "handshake-ack", accepted: true };
     port.postMessage(response);
+    if (transportConfig) {
+      postSystemEventToPort(port, wsConnected ? "transport.connected" : "transport.disconnected", {});
+    }
     scheduleDrain();
   }
   function ensureOutbox() {
@@ -517,7 +520,23 @@
     }
   }
   function emitSystemEvent(type, payload) {
-    const event = {
+    const msg = { kind: "system-event", event: buildSystemEvent(type, payload) };
+    for (const [, portEntry] of ports) {
+      try {
+        portEntry.port.postMessage(msg);
+      } catch {
+      }
+    }
+  }
+  function postSystemEventToPort(port, type, payload) {
+    const msg = { kind: "system-event", event: buildSystemEvent(type, payload) };
+    try {
+      port.postMessage(msg);
+    } catch {
+    }
+  }
+  function buildSystemEvent(type, payload) {
+    return {
       type,
       payload,
       source: "local",
@@ -528,13 +547,6 @@
         createdAt: Date.now()
       }
     };
-    const msg = { kind: "system-event", event };
-    for (const [, portEntry] of ports) {
-      try {
-        portEntry.port.postMessage(msg);
-      } catch {
-      }
-    }
   }
   setInterval(() => {
     const now = Date.now();
