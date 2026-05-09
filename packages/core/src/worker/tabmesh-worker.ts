@@ -180,6 +180,13 @@ function handleHandshake(port: MessagePort, msg: Extract<HubMessage, { kind: 'ha
   const response: HubMessage = { kind: 'handshake-ack', accepted: true };
   port.postMessage(response);
 
+  // Replay current transport state to the late joiner. The worker emits
+  // transport.connected/disconnected once on each transition; tabs that arrive
+  // after the transition would otherwise default to "disconnected" forever.
+  if (transportConfig) {
+    postSystemEventToPort(port, wsConnected ? 'transport.connected' : 'transport.disconnected', {});
+  }
+
   // Pick up any pending events left behind by a previous worker session.
   scheduleDrain();
 }
@@ -491,7 +498,27 @@ function onTransportMessage(data: string): void {
 }
 
 function emitSystemEvent(type: string, payload: unknown): void {
-  const event: TabMeshEvent = {
+  const msg: HubMessage = { kind: 'system-event', event: buildSystemEvent(type, payload) };
+  for (const [, portEntry] of ports) {
+    try {
+      portEntry.port.postMessage(msg);
+    } catch {
+      // Port likely closed
+    }
+  }
+}
+
+function postSystemEventToPort(port: MessagePort, type: string, payload: unknown): void {
+  const msg: HubMessage = { kind: 'system-event', event: buildSystemEvent(type, payload) };
+  try {
+    port.postMessage(msg);
+  } catch {
+    // Port likely closed
+  }
+}
+
+function buildSystemEvent(type: string, payload: unknown): TabMeshEvent {
+  return {
     type,
     payload,
     source: 'local',
@@ -502,14 +529,6 @@ function emitSystemEvent(type: string, payload: unknown): void {
       createdAt: Date.now(),
     },
   };
-  const msg: HubMessage = { kind: 'system-event', event };
-  for (const [, portEntry] of ports) {
-    try {
-      portEntry.port.postMessage(msg);
-    } catch {
-      // Port likely closed
-    }
-  }
 }
 
 // Periodically clean up stale ports
