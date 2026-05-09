@@ -217,6 +217,27 @@
   var RECONNECT_INITIAL_MS = 1e3;
   var RECONNECT_MAX_MS = 3e4;
   var RECONNECT_MULTIPLIER = 2;
+  var sentIds = /* @__PURE__ */ new Map();
+  var SENT_ID_TTL_MS = 6e4;
+  var SENT_ID_MAX = 1e3;
+  function rememberSent(id) {
+    if (!id) return;
+    sentIds.set(id, Date.now() + SENT_ID_TTL_MS);
+    if (sentIds.size > SENT_ID_MAX) {
+      const now = Date.now();
+      for (const [k, exp] of sentIds) {
+        if (exp < now) sentIds.delete(k);
+        if (sentIds.size <= SENT_ID_MAX) break;
+      }
+    }
+  }
+  function consumeIfSelf(id) {
+    if (!id) return false;
+    const exp = sentIds.get(id);
+    if (exp == null) return false;
+    sentIds.delete(id);
+    return exp >= Date.now();
+  }
   self.onconnect = (connectEvent) => {
     const port = connectEvent.ports[0];
     if (!port) return;
@@ -347,6 +368,7 @@
           if (ws && wsConnected) {
             try {
               ws.send(JSON.stringify({ type: entry.type, payload: entry.payload, id: entry.id }));
+              rememberSent(entry.id);
             } catch {
               transportOk = false;
               emitSystemEvent("event.delivery.failed", {
@@ -474,6 +496,7 @@
       return;
     }
     if (typeof parsed?.type !== "string") return;
+    if (typeof parsed.id === "string" && consumeIfSelf(parsed.id)) return;
     const event = {
       type: parsed.type,
       payload: parsed.payload,
