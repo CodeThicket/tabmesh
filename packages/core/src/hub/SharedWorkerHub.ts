@@ -30,15 +30,27 @@ export class SharedWorkerHub implements Hub {
   private _connected = false;
   private readonly channelName: string;
   private readonly workerUrl: string;
+  private readonly workerName: string;
   private readonly workerTransportConfig: WorkerTransportConfig | null;
   private tabId: string | null = null;
 
   // Pending submit promises awaiting outbox-write-ack
   private pendingSubmits = new Map<string, { resolve: () => void; reject: (err: Error) => void }>();
 
-  constructor(channelName: string, workerUrl?: string, transport?: Transport) {
+  constructor(
+    channelName: string,
+    workerUrl?: string,
+    transport?: Transport,
+    workerVersion?: string
+  ) {
     this.channelName = channelName;
     this.workerUrl = workerUrl ?? '/tabmesh-worker.js';
+    // SharedWorkers are keyed by `name`; appending a per-deploy version
+    // ensures new deploys spawn a fresh worker instance instead of reusing
+    // the cached one. See TabMeshConfig.workerVersion for context.
+    this.workerName = workerVersion
+      ? `tabmesh:${channelName}:${workerVersion}`
+      : `tabmesh:${channelName}`;
     this.workerTransportConfig = transport?.getWorkerConfig?.() ?? null;
   }
 
@@ -49,9 +61,9 @@ export class SharedWorkerHub implements Hub {
   async connect(tabId: string): Promise<void> {
     this.tabId = tabId;
 
-    // Create SharedWorker with namespaced name
+    // Create SharedWorker with namespaced name (includes workerVersion if set)
     this.worker = new SharedWorker(this.workerUrl, {
-      name: `tabmesh:${this.channelName}`,
+      name: this.workerName,
     });
 
     this.port = this.worker.port;
