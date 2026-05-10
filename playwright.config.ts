@@ -23,11 +23,18 @@ export default defineConfig({
   ],
   webServer: [
     {
+      // The playground imports @tabmesh/core, @tabmesh/react, and
+      // @tabmesh/transport-websocket via their built `dist/` (per the
+      // package.json `exports` field). On a fresh CI runner those
+      // don't exist yet, so Vite fails to resolve the imports.
+      // `^...` builds every workspace dep of the playground
+      // transitively before we start the dev server. Then build the
+      // worker/SW bundles and start vite dev.
       command:
-        'pnpm --filter @tabmesh/playground build:worker && pnpm --filter @tabmesh/playground build:sw && pnpm --filter @tabmesh/playground dev',
+        'pnpm --filter "@tabmesh/playground^..." build && pnpm --filter @tabmesh/playground build:worker && pnpm --filter @tabmesh/playground build:sw && pnpm --filter @tabmesh/playground dev',
       url: PLAYGROUND_URL,
       reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
+      timeout: 180_000,
     },
     {
       command: `pnpm --filter @tabmesh/playground exec node scripts/echo-server.mjs ${ECHO_PORT}`,
