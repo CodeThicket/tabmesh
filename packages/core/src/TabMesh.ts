@@ -375,14 +375,31 @@ export class TabMesh {
    * Get the current status of the mesh.
    */
   getStatus(): TabMeshStatus {
+    let role: TabMeshStatus['role'] = null;
+    let leaderTabId: string | null = null;
+    let term = 0;
+    if (this.hubMode === 'shared-worker') {
+      // In shared-worker mode every tab is a follower of the worker. There
+      // is no "leader" concept — the worker isn't a tab.
+      role = 'follower';
+    } else if (this.hub instanceof ElectedLeaderHub) {
+      const snap = this.hub.getElectionSnapshot();
+      if (snap) {
+        role = snap.isLeader ? 'hub' : 'follower';
+        leaderTabId = snap.leaderTabId;
+        term = snap.term;
+      }
+    }
     return {
       started: this.started,
       hubMode: this.hubMode,
       hubConnected: this.hub?.connected ?? false,
-      role: this.hubMode === 'shared-worker' ? 'follower' : null,
+      role,
       transportState: this.transportState,
       tabId: this.tabId,
       degraded: this.degraded,
+      leaderTabId,
+      term,
     };
   }
 
