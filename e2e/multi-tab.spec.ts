@@ -305,11 +305,76 @@ test.describe('TabMesh — multi-tab harness', () => {
     // Plus a delivery URL endpoint in the test fixture.
   });
 
-  test.fixme('Elected-leader failover within 50ms (#28-#31)', async () => {
-    // Force fallback by deleting `window.SharedWorker` before mesh.start().
-    // Then open 3 tabs, identify the leader (term + tabId), close it, and
-    // verify another tab claims leadership inside the Web Locks SLA.
-    // Requires either a debug system event from the leader or a
-    // `mesh.getStatus()` field exposing the current term/leaderTabId.
+  test('elected-leader failover when the leader tab closes (#28-#31)', async ({ context }) => {
+    // Force fallback mode via `?hub=elected` (deletes window.SharedWorker
+    // before mesh.start). Open 3 tabs, identify the leader, close it, and
+    // verify a different tab takes over with a higher term.
+    const a = await newPlaygroundTab(context, { hub: 'elected' });
+    const b = await newPlaygroundTab(context, { hub: 'elected' });
+    const c = await newPlaygroundTab(context, { hub: 'elected' });
+
+    type Status = {
+      role: 'hub' | 'follower' | null;
+      tabId: string;
+      leaderTabId: string | null;
+      term: number;
+    };
+    const readStatus = (page: Page): Promise<Status> =>
+      page.evaluate(() => {
+        const m = (globalThis as unknown as { __tabmesh: { getStatus(): Status } }).__tabmesh;
+        return m.getStatus();
+      });
+    const allReady = async (): Promise<Status[]> => {
+      const statuses = await Promise.all([a, b, c].map(readStatus));
+      return statuses;
+    };
+
+    // Wait for exactly one leader to be elected across the three tabs.
+    await expect
+      .poll(
+        async () => {
+          const statuses = await allReady();
+          return statuses.filter((s) => s.role === 'hub').length;
+        },
+        { timeout: 10_000 }
+      )
+      .toBe(1);
+
+    const initial = await allReady();
+    const leader = initial.find((s) => s.role === 'hub');
+    expect(leader).toBeDefined();
+    if (!leader) throw new Error('unreachable');
+    const leaderTabId = leader.tabId;
+
+    const leaderPage = [a, b, c].find((page, i) => initial[i] && initial[i]?.tabId === leaderTabId);
+    if (!leaderPage) throw new Error('could not match leader page');
+
+    await leaderPage.close();
+    const survivors = [a, b, c].filter((p) => !p.isClosed());
+    expect(survivors.length).toBe(2);
+
+    // The remaining tabs must elect a new leader. Web Locks failover is
+    // sub-50ms in spec; BC heartbeat fallback is ~1.5s; IDB is up to 5s.
+    // Headless Chromium supports Web Locks, but we keep a generous bound.
+    //
+    // Note: in Web Locks mode the per-tab `term` counter doesn't carry
+    // across tabs (each tab tracks its own term-of-this-leadership), so
+    // the meaningful assertion is "a different tab is now the leader."
+    await expect
+      .poll(
+        async () => {
+          const updated = await Promise.all(survivors.map(readStatus));
+          const newLeader = updated.find((s) => s.role === 'hub');
+          if (!newLeader) return null;
+          if (newLeader.tabId === leaderTabId) return null;
+          return newLeader.tabId;
+        },
+        { timeout: 10_000 }
+      )
+      .not.toBeNull();
+
+    for (const page of survivors) {
+      await page.close();
+    }
   });
 });

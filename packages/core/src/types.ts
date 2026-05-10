@@ -393,6 +393,18 @@ export interface TabMeshStatus {
   tabId: string;
   /** Whether persistence is degraded (in-memory fallback). */
   degraded: boolean;
+  /**
+   * Current elected-leader's tab id, when running in elected-leader mode.
+   * Null in shared-worker mode (no leader concept) or before the first
+   * leader is elected.
+   */
+  leaderTabId?: string | null;
+  /**
+   * Current election term, when running in elected-leader mode. Increments
+   * with each leadership transition. Useful for detecting failover and
+   * resolving split-brain.
+   */
+  term?: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -65,6 +65,19 @@ export class ElectedLeaderHub implements Hub {
     return this._connected;
   }
 
+  /**
+   * Snapshot of the current leader-election state. Returns `null` if the
+   * hub hasn't started electing yet. Used by TabMesh.getStatus().
+   */
+  getElectionSnapshot(): { isLeader: boolean; leaderTabId: string | null; term: number } | null {
+    if (!this.leader) return null;
+    return {
+      isLeader: this.leader.leader,
+      leaderTabId: this.leader.leaderTabId,
+      term: this.leader.term,
+    };
+  }
+
   async connect(tabId: string): Promise<void> {
     this.tabId = tabId;
 

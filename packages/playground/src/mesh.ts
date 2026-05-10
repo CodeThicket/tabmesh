@@ -34,3 +34,9 @@ function numberFromParam(name: string): number | undefined {
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
+
+// Expose the mesh instance on `window` for the e2e harness. The playground
+// is a demo app — there's no privacy boundary to protect — and the
+// alternative (rendering every diagnostic field on screen) bloats the UI
+// for tests no human would read.
+(globalThis as unknown as { __tabmesh: typeof mesh }).__tabmesh = mesh;
