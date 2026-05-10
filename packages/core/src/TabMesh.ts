@@ -122,9 +122,10 @@ export class TabMesh {
 
     // Start keepalive ping for SharedWorker
     if (this.hub instanceof SharedWorkerHub) {
+      const pingMs = this.config.pingMs ?? 10_000;
       this.pingInterval = setInterval(() => {
         (this.hub as SharedWorkerHub).sendPing();
-      }, 10_000);
+      }, pingMs);
     }
 
     // Register Service Worker if configured. Skip in degraded mode — without
@@ -397,7 +398,8 @@ export class TabMesh {
         this.config.channelName,
         this.config.workerUrl,
         this.config.transport,
-        this.config.workerVersion
+        this.config.workerVersion,
+        this.config.staleTimeoutMs
       );
     }
 

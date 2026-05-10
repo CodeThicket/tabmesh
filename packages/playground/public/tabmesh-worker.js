@@ -208,7 +208,8 @@
   var outbox = null;
   var outboxReady = null;
   var BATCH_WINDOW_MS = 50;
-  var STALE_TIMEOUT_MS = 3e4;
+  var DEFAULT_STALE_TIMEOUT_MS = 3e4;
+  var staleTimeoutMs = DEFAULT_STALE_TIMEOUT_MS;
   var transportConfig = null;
   var ws = null;
   var wsConnected = false;
@@ -312,8 +313,12 @@
     }
     if (!channelName) {
       channelName = msg.channelName;
+      if (typeof msg.staleTimeoutMs === "number" && msg.staleTimeoutMs > 0) {
+        staleTimeoutMs = msg.staleTimeoutMs;
+      }
       ensureOutbox();
     }
+    ensureStalePortSweeperStarted();
     ports.set(msg.tabId, {
       tabId: msg.tabId,
       port,
@@ -575,16 +580,27 @@
       }
     };
   }
-  setInterval(() => {
-    const now = Date.now();
-    for (const [tabId, entry] of ports) {
-      if (now - entry.lastSeenAt > STALE_TIMEOUT_MS) {
-        ports.delete(tabId);
-        try {
-          entry.port.close();
-        } catch {
+  var STALE_CHECK_FLOOR_MS = 100;
+  var STALE_CHECK_CEILING_MS = 15e3;
+  var stalePortSweeperStarted = false;
+  function ensureStalePortSweeperStarted() {
+    if (stalePortSweeperStarted) return;
+    stalePortSweeperStarted = true;
+    const intervalMs = Math.min(
+      Math.max(Math.floor(staleTimeoutMs / 4), STALE_CHECK_FLOOR_MS),
+      STALE_CHECK_CEILING_MS
+    );
+    setInterval(() => {
+      const now = Date.now();
+      for (const [tabId, entry] of ports) {
+        if (now - entry.lastSeenAt > staleTimeoutMs) {
+          ports.delete(tabId);
+          try {
+            entry.port.close();
+          } catch {
+          }
         }
       }
-    }
-  }, 15e3);
+    }, intervalMs);
+  }
 })();

@@ -157,7 +157,14 @@ export interface TabRegistryEntry {
  * Messages sent between tabs and the Hub over MessagePort or BroadcastChannel.
  */
 export type HubMessage =
-  | { kind: 'handshake'; tabId: string; protocolVersion: number; channelName: string }
+  | {
+      kind: 'handshake';
+      tabId: string;
+      protocolVersion: number;
+      channelName: string;
+      /** Optional stale-port timeout the first tab can request from the worker. */
+      staleTimeoutMs?: number;
+    }
   | { kind: 'handshake-ack'; accepted: boolean; reason?: string }
   | { kind: 'event'; event: TabMeshEvent }
   | { kind: 'outbox-write'; entry: OutboxEntry }
@@ -314,6 +321,25 @@ export interface TabMeshConfig {
    * @example workerVersion: '1.4.2'
    */
   workerVersion?: string;
+
+  /**
+   * Interval (ms) between SharedWorker keepalive pings. Lower values
+   * detect tab freeze faster; higher values reduce wakeups in idle apps.
+   * @default 10000
+   */
+  pingMs?: number;
+
+  /**
+   * How long (ms) the SharedWorker waits for a ping before treating a
+   * port as stale and evicting it from the registry. The worker also
+   * prunes evicted ports from any future fan-outs.
+   *
+   * The first connecting tab's value wins; subsequent tabs cannot
+   * change it for the lifetime of the worker.
+   *
+   * @default 30000
+   */
+  staleTimeoutMs?: number;
 
   /** Leader election configuration (used only in fallback mode). */
   leader?: Partial<LeaderConfig>;

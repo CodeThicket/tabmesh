@@ -49,8 +49,9 @@ let outboxReady: Promise<void> | null = null;
 /** Batch window for outbox drain (ms). */
 const BATCH_WINDOW_MS = 50;
 
-/** Stale tab timeout (ms). */
-const STALE_TIMEOUT_MS = 30_000;
+/** Default stale tab timeout (ms). First-handshake value wins. */
+const DEFAULT_STALE_TIMEOUT_MS = 30_000;
+let staleTimeoutMs = DEFAULT_STALE_TIMEOUT_MS;
 
 // ---------------------------------------------------------------------------
 // Transport state — owned by the SharedWorker.
@@ -197,8 +198,14 @@ function handleHandshake(port: MessagePort, msg: Extract<HubMessage, { kind: 'ha
   // (the worker is namespaced by `tabmesh:{channelName}` in SharedWorker.name).
   if (!channelName) {
     channelName = msg.channelName;
+    if (typeof msg.staleTimeoutMs === 'number' && msg.staleTimeoutMs > 0) {
+      staleTimeoutMs = msg.staleTimeoutMs;
+    }
     ensureOutbox();
   }
+  // Spin up the stale-port sweeper lazily so its check interval scales with
+  // whatever staleTimeoutMs the first handshake chose.
+  ensureStalePortSweeperStarted();
 
   // Register the port
   ports.set(msg.tabId, {
@@ -567,17 +574,30 @@ function buildSystemEvent(type: string, payload: unknown): TabMeshEvent {
   };
 }
 
-// Periodically clean up stale ports
-setInterval(() => {
-  const now = Date.now();
-  for (const [tabId, entry] of ports) {
-    if (now - entry.lastSeenAt > STALE_TIMEOUT_MS) {
-      ports.delete(tabId);
-      try {
-        entry.port.close();
-      } catch {
-        // Already closed
+// Periodically clean up stale ports. The check interval scales with the
+// configured stale timeout so a short test-only timeout still produces
+// timely evictions, while production defaults stay at ~15s.
+const STALE_CHECK_FLOOR_MS = 100;
+const STALE_CHECK_CEILING_MS = 15_000;
+let stalePortSweeperStarted = false;
+function ensureStalePortSweeperStarted(): void {
+  if (stalePortSweeperStarted) return;
+  stalePortSweeperStarted = true;
+  const intervalMs = Math.min(
+    Math.max(Math.floor(staleTimeoutMs / 4), STALE_CHECK_FLOOR_MS),
+    STALE_CHECK_CEILING_MS
+  );
+  setInterval(() => {
+    const now = Date.now();
+    for (const [tabId, entry] of ports) {
+      if (now - entry.lastSeenAt > staleTimeoutMs) {
+        ports.delete(tabId);
+        try {
+          entry.port.close();
+        } catch {
+          // Already closed
+        }
       }
     }
-  }
-}, 15_000);
+  }, intervalMs);
+}

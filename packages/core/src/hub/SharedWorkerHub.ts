@@ -41,7 +41,8 @@ export class SharedWorkerHub implements Hub {
     channelName: string,
     workerUrl?: string,
     transport?: Transport,
-    workerVersion?: string
+    workerVersion?: string,
+    staleTimeoutMs?: number
   ) {
     this.channelName = channelName;
     this.workerUrl = workerUrl ?? '/tabmesh-worker.js';
@@ -52,7 +53,10 @@ export class SharedWorkerHub implements Hub {
       ? `tabmesh:${channelName}:${workerVersion}`
       : `tabmesh:${channelName}`;
     this.workerTransportConfig = transport?.getWorkerConfig?.() ?? null;
+    this.staleTimeoutMs = staleTimeoutMs;
   }
+
+  private readonly staleTimeoutMs: number | undefined;
 
   get connected(): boolean {
     return this._connected;
@@ -246,6 +250,7 @@ export class SharedWorkerHub implements Hub {
         tabId,
         protocolVersion: PROTOCOL_VERSION,
         channelName: this.channelName,
+        staleTimeoutMs: this.staleTimeoutMs,
       } satisfies HubMessage);
     });
   }
