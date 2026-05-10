@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/build-worker.mjs && vite build",
+    "build": "node scripts/build-worker.mjs && node scripts/build-sw.mjs && vite build",
     "build:worker": "node scripts/build-worker.mjs",
+    "build:sw": "node scripts/build-sw.mjs",
     "preview": "vite preview",
     "echo-server": "node scripts/echo-server.mjs"
   },

@@ -20,12 +20,22 @@ const transportUrl =
 // TabMeshConfig directly.
 const staleTimeoutMs = numberFromParam('staleTimeoutMs');
 const pingMs = numberFromParam('pingMs');
+const swEnabled = params.get('sw') === '1';
+const swDeliveryUrl = params.get('deliveryUrl') ?? undefined;
 
 export const mesh = new TabMesh({
   channelName: 'playground-todos',
   transport: new WebSocketTransport({ url: transportUrl }),
   ...(staleTimeoutMs !== undefined ? { staleTimeoutMs } : {}),
   ...(pingMs !== undefined ? { pingMs } : {}),
+  ...(swEnabled
+    ? {
+        serviceWorker: {
+          enabled: true,
+          ...(swDeliveryUrl ? { deliveryUrl: swDeliveryUrl } : {}),
+        },
+      }
+    : {}),
 });
 
 function numberFromParam(name: string): number | undefined {
