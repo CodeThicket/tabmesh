@@ -63,6 +63,25 @@ describe('ServiceWorkerClient', () => {
       config: {
         channelName: 'test-app',
         dbName: 'tabmesh:test-app',
+        deliveryUrl: undefined,
+      },
+    });
+  });
+
+  it('forwards deliveryUrl to the service worker config', async () => {
+    const client = new ServiceWorkerClient('test-app', {
+      enabled: true,
+      deliveryUrl: 'https://api.example.com/events',
+    });
+
+    await client.register();
+
+    expect(mockRegistration.active?.postMessage).toHaveBeenCalledWith({
+      kind: 'tabmesh-sw-config',
+      config: {
+        channelName: 'test-app',
+        dbName: 'tabmesh:test-app',
+        deliveryUrl: 'https://api.example.com/events',
       },
     });
   });

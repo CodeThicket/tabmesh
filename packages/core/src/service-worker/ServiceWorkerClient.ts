@@ -60,6 +60,7 @@ export class ServiceWorkerClient {
         config: {
           channelName: this.channelName,
           dbName: this.dbName,
+          deliveryUrl: this.config.deliveryUrl,
         },
       });
 

@@ -136,6 +136,11 @@ async function drainPendingEvents(): Promise<void> {
     // Sort by priority (desc), then createdAt (asc)
     pending.sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt);
 
+    // Without a delivery endpoint the SW has nothing to send to. Leave
+    // pending entries in the outbox so the next Hub session picks them up;
+    // we still GC TTL-expired entries below.
+    const canDeliver = Boolean(config.deliveryUrl);
+
     for (const entry of pending) {
       // Filter expired events
       if (entry.expiresAt !== undefined && entry.expiresAt <= now) {
@@ -143,31 +148,27 @@ async function drainPendingEvents(): Promise<void> {
         continue;
       }
 
-      // Attempt delivery via fetch if deliveryUrl is configured
-      if (config.deliveryUrl) {
-        try {
-          const response = await fetch(config.deliveryUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              type: entry.type,
-              payload: entry.payload,
-              id: entry.id,
-              sourceTabId: entry.sourceTabId,
-            }),
-          });
+      if (!canDeliver) continue;
 
-          if (response.ok) {
-            deliveredIds.push(entry.id);
-          }
-          // Non-OK response: leave as pending for next sync
-        } catch {
-          // Network failure: leave as pending for next sync
+      // Attempt delivery via fetch.
+      try {
+        const response = await fetch(config.deliveryUrl as string, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: entry.type,
+            payload: entry.payload,
+            id: entry.id,
+            sourceTabId: entry.sourceTabId,
+          }),
+        });
+
+        if (response.ok) {
+          deliveredIds.push(entry.id);
         }
-      } else {
-        // No delivery URL: mark as delivered (events will be picked up
-        // by the next Hub that starts)
-        deliveredIds.push(entry.id);
+        // Non-OK response: leave as pending for next sync
+      } catch {
+        // Network failure: leave as pending for next sync
       }
     }
 
