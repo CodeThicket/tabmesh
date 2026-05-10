@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  // ../core/src/service-worker/tabmesh-sw.ts
+  // src/service-worker/tabmesh-sw.ts
   var config = null;
   var STORE_NAME = "events";
   var SYNC_TAG_PREFIX = "tabmesh-sync:";

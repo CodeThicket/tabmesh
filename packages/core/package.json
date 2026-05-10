@@ -40,20 +40,21 @@
     "./service-worker": {
       "import": "./dist/service-worker/index.js",
       "types": "./dist/service-worker/index.d.ts"
-    }
+    },
+    "./worker.js": "./dist/tabmesh-worker.js",
+    "./sw.js": "./dist/tabmesh-sw.js"
   },
   "files": ["dist"],
   "sideEffects": false,
   "scripts": {
-    "build": "rm -rf dist tsconfig.tsbuildinfo && tsc && vite build",
+    "build": "rm -rf dist tsconfig.tsbuildinfo && tsc && vite build && node scripts/build-bundles.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:coverage": "vitest --coverage"
   },
-  "peerDependencies": {},
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "esbuild": "^0.28.0",
     "jsdom": "^23.0.0",
     "typescript": "^5.2.0",
     "vite": "^5.0.0",

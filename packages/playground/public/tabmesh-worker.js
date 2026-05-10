@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  // ../core/src/storage/EventOutbox.ts
+  // src/storage/EventOutbox.ts
   var STORE_NAME = "events";
   var DB_VERSION = 1;
   var DEFAULTS = {
@@ -197,10 +197,10 @@
     }
   };
 
-  // ../core/src/types.ts
+  // src/types.ts
   var PROTOCOL_VERSION = 1;
 
-  // ../core/src/worker/tabmesh-worker.ts
+  // src/worker/tabmesh-worker.ts
   var ports = /* @__PURE__ */ new Map();
   var drainScheduled = false;
   var drainRunning = false;
