@@ -174,7 +174,17 @@ export type HubMessage =
   | { kind: 'clear-outbox-ack' }
   | { kind: 'broadcast-event'; event: TabMeshEvent }
   | { kind: 'ping'; tabId: string }
-  | { kind: 'pong'; tabId: string }
+  | {
+      kind: 'pong';
+      tabId: string;
+      /**
+       * Worker's recorded visibility state for `tabId`, or undefined if
+       * the tab is not in the registry. Populated by the SharedWorker
+       * hub; useful for tests verifying that lifecycle messages reached
+       * the worker.
+       */
+      visibilityState?: TabVisibilityState;
+    }
   | { kind: 'lifecycle'; tabId: string; state: TabVisibilityState }
   | { kind: 'leader-elected'; tabId: string; term: number }
   | { kind: 'system-event'; event: TabMeshEvent }
