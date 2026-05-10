@@ -23,11 +23,15 @@ export default defineConfig({
   ],
   webServer: [
     {
+      // Core's `dist/` is what `@tabmesh/core` resolves to when Vite
+      // dev-serves the playground; without it, the playground bundle
+      // fails to import. Build core, then the worker + SW bundles, then
+      // start vite dev.
       command:
-        'pnpm --filter @tabmesh/playground build:worker && pnpm --filter @tabmesh/playground build:sw && pnpm --filter @tabmesh/playground dev',
+        'pnpm --filter @tabmesh/core build && pnpm --filter @tabmesh/playground build:worker && pnpm --filter @tabmesh/playground build:sw && pnpm --filter @tabmesh/playground dev',
       url: PLAYGROUND_URL,
       reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
+      timeout: 120_000,
     },
     {
       command: `pnpm --filter @tabmesh/playground exec node scripts/echo-server.mjs ${ECHO_PORT}`,
