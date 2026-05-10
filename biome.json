@@ -51,7 +51,9 @@
       "packages/playground/public/tabmesh-worker.js",
       "packages/playground/public/tabmesh-sw.js",
       "test-results",
-      "playwright-report"
+      "playwright-report",
+      "docs/.vitepress/cache",
+      "docs/.vitepress/dist"
     ]
   }
 }
