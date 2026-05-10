@@ -72,6 +72,37 @@ const sentIds = new Map<string, number>();
 const SENT_ID_TTL_MS = 60_000;
 const SENT_ID_MAX = 1000;
 
+// Outbox entry ids that have been distributed to the connected tabs. Lets
+// drain() retry the transport forward without re-fanning out cross-tab — fan
+// out happens at most once per entry. Cleared when the entry is marked
+// delivered. Bounded with a TTL to recover from TTL-expired entries the worker
+// never observed clearing.
+const fannedOutIds = new Map<string, number>();
+const FANNED_OUT_TTL_MS = 5 * 60_000;
+const FANNED_OUT_MAX = 5000;
+
+function rememberFannedOut(id: string): void {
+  if (!id) return;
+  fannedOutIds.set(id, Date.now() + FANNED_OUT_TTL_MS);
+  if (fannedOutIds.size > FANNED_OUT_MAX) {
+    const now = Date.now();
+    for (const [k, exp] of fannedOutIds) {
+      if (exp < now) fannedOutIds.delete(k);
+      if (fannedOutIds.size <= FANNED_OUT_MAX) break;
+    }
+  }
+}
+
+function wasFannedOut(id: string): boolean {
+  const exp = fannedOutIds.get(id);
+  if (exp == null) return false;
+  if (exp < Date.now()) {
+    fannedOutIds.delete(id);
+    return false;
+  }
+  return true;
+}
+
 function rememberSent(id: string): void {
   if (!id) return;
   sentIds.set(id, Date.now() + SENT_ID_TTL_MS);
@@ -249,9 +280,6 @@ async function drain(): Promise<void> {
   await ensureOutbox();
   if (!outbox) return;
 
-  // If transport is configured but not yet open, hold events until WS comes up.
-  if (transportConfig && !wsConnected) return;
-
   drainRunning = true;
   try {
     const pending = await outbox.readPending();
@@ -262,8 +290,12 @@ async function drain(): Promise<void> {
     const deliveredIds: string[] = [];
 
     for (const entry of pending) {
-      // Distribute to all connected tabs first — local fan-out is the cheapest
-      // step and lets the UI react before the WS round-trip.
+      // Local fan-out is decoupled from transport state. Cross-tab delivery
+      // happens once per entry, even if the WS is down or never configured.
+      // Subsequent drains (e.g. on transport reconnect) skip the fan-out for
+      // already-distributed entries and only retry the WS forward.
+      const alreadyFannedOut = wasFannedOut(entry.id);
+
       const baseEvent: TabMeshEvent = {
         type: entry.type,
         payload: entry.payload,
@@ -276,17 +308,20 @@ async function drain(): Promise<void> {
         },
       };
 
-      for (const [tabId, portEntry] of ports) {
-        try {
-          const tabEvent: TabMeshEvent = {
-            ...baseEvent,
-            source: tabId === entry.sourceTabId ? 'local' : 'remote',
-          };
-          const out: HubMessage = { kind: 'event', event: tabEvent };
-          portEntry.port.postMessage(out);
-        } catch {
-          // Port likely closed — stale-port sweeper will tidy up.
+      if (!alreadyFannedOut) {
+        for (const [tabId, portEntry] of ports) {
+          try {
+            const tabEvent: TabMeshEvent = {
+              ...baseEvent,
+              source: tabId === entry.sourceTabId ? 'local' : 'remote',
+            };
+            const out: HubMessage = { kind: 'event', event: tabEvent };
+            portEntry.port.postMessage(out);
+          } catch {
+            // Port likely closed — stale-port sweeper will tidy up.
+          }
         }
+        rememberFannedOut(entry.id);
       }
 
       // Forward to backend over WebSocket if configured.
@@ -317,6 +352,7 @@ async function drain(): Promise<void> {
     // Always run the cleanup transaction — it reclaims previously-delivered
     // and TTL-expired entries, even when nothing new was just sent.
     await outbox.markDeliveredAndCleanup(deliveredIds);
+    for (const id of deliveredIds) fannedOutIds.delete(id);
   } finally {
     drainRunning = false;
   }

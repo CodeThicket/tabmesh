@@ -220,6 +220,29 @@
   var sentIds = /* @__PURE__ */ new Map();
   var SENT_ID_TTL_MS = 6e4;
   var SENT_ID_MAX = 1e3;
+  var fannedOutIds = /* @__PURE__ */ new Map();
+  var FANNED_OUT_TTL_MS = 5 * 6e4;
+  var FANNED_OUT_MAX = 5e3;
+  function rememberFannedOut(id) {
+    if (!id) return;
+    fannedOutIds.set(id, Date.now() + FANNED_OUT_TTL_MS);
+    if (fannedOutIds.size > FANNED_OUT_MAX) {
+      const now = Date.now();
+      for (const [k, exp] of fannedOutIds) {
+        if (exp < now) fannedOutIds.delete(k);
+        if (fannedOutIds.size <= FANNED_OUT_MAX) break;
+      }
+    }
+  }
+  function wasFannedOut(id) {
+    const exp = fannedOutIds.get(id);
+    if (exp == null) return false;
+    if (exp < Date.now()) {
+      fannedOutIds.delete(id);
+      return false;
+    }
+    return true;
+  }
   function rememberSent(id) {
     if (!id) return;
     sentIds.set(id, Date.now() + SENT_ID_TTL_MS);
@@ -338,12 +361,12 @@
     }
     await ensureOutbox();
     if (!outbox) return;
-    if (transportConfig && !wsConnected) return;
     drainRunning = true;
     try {
       const pending = await outbox.readPending();
       const deliveredIds = [];
       for (const entry of pending) {
+        const alreadyFannedOut = wasFannedOut(entry.id);
         const baseEvent = {
           type: entry.type,
           payload: entry.payload,
@@ -355,16 +378,19 @@
             createdAt: entry.createdAt
           }
         };
-        for (const [tabId, portEntry] of ports) {
-          try {
-            const tabEvent = {
-              ...baseEvent,
-              source: tabId === entry.sourceTabId ? "local" : "remote"
-            };
-            const out = { kind: "event", event: tabEvent };
-            portEntry.port.postMessage(out);
-          } catch {
+        if (!alreadyFannedOut) {
+          for (const [tabId, portEntry] of ports) {
+            try {
+              const tabEvent = {
+                ...baseEvent,
+                source: tabId === entry.sourceTabId ? "local" : "remote"
+              };
+              const out = { kind: "event", event: tabEvent };
+              portEntry.port.postMessage(out);
+            } catch {
+            }
           }
+          rememberFannedOut(entry.id);
         }
         let transportOk = true;
         if (transportConfig) {
@@ -388,6 +414,7 @@
         }
       }
       await outbox.markDeliveredAndCleanup(deliveredIds);
+      for (const id of deliveredIds) fannedOutIds.delete(id);
     } finally {
       drainRunning = false;
     }
