@@ -444,7 +444,11 @@
     if (entry) {
       entry.lastSeenAt = Date.now();
     }
-    const pong = { kind: "pong", tabId: msg.tabId };
+    const pong = {
+      kind: "pong",
+      tabId: msg.tabId,
+      visibilityState: entry?.visibilityState
+    };
     port.postMessage(pong);
   }
   function handleLifecycle(msg) {

@@ -405,7 +405,11 @@ function handlePing(port: MessagePort, msg: Extract<HubMessage, { kind: 'ping' }
   if (entry) {
     entry.lastSeenAt = Date.now();
   }
-  const pong: HubMessage = { kind: 'pong', tabId: msg.tabId };
+  const pong: HubMessage = {
+    kind: 'pong',
+    tabId: msg.tabId,
+    visibilityState: entry?.visibilityState,
+  };
   port.postMessage(pong);
 }
 

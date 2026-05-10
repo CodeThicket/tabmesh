@@ -247,12 +247,49 @@ test.describe('TabMesh — multi-tab harness', () => {
     await b.close();
   });
 
-  test.fixme('worker-side observation of lifecycle messages (#6)', async () => {
-    // SharedWorker console output is not visible to Playwright's page-
-    // attached console listener. Either:
-    // (a) route worker logs over a `port.ping`-style introspection that
-    //     returns the recorded visibility state, or
-    // (b) use chrome://inspect/#workers via CDP to attach to the SW.
+  test('worker records lifecycle messages and replies via pong (#6)', async ({ context }) => {
+    // Open the playground, drive a visibilitychange so the tab posts a
+    // `lifecycle` message to the worker, then probe the worker by opening
+    // a fresh SharedWorker port (same name) and sending a `ping` with the
+    // playground tab's id. The pong now carries `visibilityState`, which
+    // proves the lifecycle message reached the worker registry.
+    const a = await newPlaygroundTab(context);
+    await waitForTransportConnected(a);
+
+    const playgroundTabId = await a.evaluate(() =>
+      sessionStorage.getItem('tabmesh:tabId:playground-todos')
+    );
+    expect(playgroundTabId).toBeTruthy();
+
+    await a.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        value: 'hidden',
+        configurable: true,
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    // Give the lifecycle message a tick to land in the worker.
+    await a.waitForTimeout(150);
+
+    const visibility = await a.evaluate((targetTabId) => {
+      return new Promise<string | undefined>((resolve) => {
+        const w = new SharedWorker('/tabmesh-worker.js', {
+          name: 'tabmesh:playground-todos',
+        });
+        w.port.onmessage = (e) => {
+          const msg = e.data as { kind?: string; visibilityState?: string };
+          if (msg?.kind === 'pong') resolve(msg.visibilityState);
+        };
+        w.port.start();
+        w.port.postMessage({ kind: 'ping', tabId: targetTabId });
+        setTimeout(() => resolve(undefined), 1500);
+      });
+    }, playgroundTabId);
+
+    expect(visibility).toBe('hidden');
+
+    await a.close();
   });
 
   test.fixme('Service Worker Background Sync drains pending events (#26 / #27)', async () => {
