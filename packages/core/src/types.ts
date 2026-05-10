@@ -251,6 +251,14 @@ export interface ServiceWorkerConfig {
   enabled: boolean;
   /** Service Worker script URL. @default '/tabmesh-sw.js' */
   scriptUrl: string;
+  /**
+   * HTTP endpoint the Service Worker POSTs pending events to during
+   * Background Sync. Required for the SW handoff to actually deliver
+   * events. When omitted, the SW leaves pending events in the outbox
+   * for the next Hub session to drain — it does NOT silently mark them
+   * delivered.
+   */
+  deliveryUrl?: string;
 }
 
 /**
