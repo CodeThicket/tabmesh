@@ -48,7 +48,9 @@
       "node_modules",
       "coverage",
       ".git",
-      "packages/playground/public/tabmesh-worker.js"
+      "packages/playground/public/tabmesh-worker.js",
+      "test-results",
+      "playwright-report"
     ]
   }
 }

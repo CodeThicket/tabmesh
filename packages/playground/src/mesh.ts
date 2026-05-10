@@ -14,7 +14,23 @@ const transportUrl =
   (import.meta as ImportMeta & { env: Record<string, string> }).env.VITE_TABMESH_WS_URL ??
   'wss://ws.postman-echo.com/raw';
 
+// Test-only knobs — accept overrides from URL params so the Playwright
+// harness can exercise short-timeout scenarios without modifying production
+// defaults. Apps that want to tune these in production should pass them via
+// TabMeshConfig directly.
+const staleTimeoutMs = numberFromParam('staleTimeoutMs');
+const pingMs = numberFromParam('pingMs');
+
 export const mesh = new TabMesh({
   channelName: 'playground-todos',
   transport: new WebSocketTransport({ url: transportUrl }),
+  ...(staleTimeoutMs !== undefined ? { staleTimeoutMs } : {}),
+  ...(pingMs !== undefined ? { pingMs } : {}),
 });
+
+function numberFromParam(name: string): number | undefined {
+  const raw = params.get(name);
+  if (raw == null) return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}

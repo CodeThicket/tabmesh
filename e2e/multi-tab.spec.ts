@@ -33,12 +33,17 @@ async function waitForTransportConnected(page: Page) {
   );
 }
 
-async function newPlaygroundTab(context: BrowserContext): Promise<Page> {
+async function newPlaygroundTab(
+  context: BrowserContext,
+  extraParams: Record<string, string | number> = {}
+): Promise<Page> {
   const page = await context.newPage();
   // Pass the WS URL explicitly — the playground's mesh.ts reads `?ws=` to
   // override the default. Using `goto('/')` with a query in `baseURL` would
   // be stripped during URL resolution.
-  await page.goto(`/?ws=ws://localhost:${ECHO_PORT}`);
+  const params = new URLSearchParams({ ws: `ws://localhost:${ECHO_PORT}` });
+  for (const [k, v] of Object.entries(extraParams)) params.set(k, String(v));
+  await page.goto(`/?${params.toString()}`);
   await page.waitForSelector('input.todo-input', { timeout: 10_000 });
   return page;
 }
@@ -196,10 +201,50 @@ test.describe('TabMesh — multi-tab harness', () => {
   // Hard / unsupported in this harness — TODOs with rationale
   // ---------------------------------------------------------------------------
 
-  test.fixme('stale port cleanup after >30s without ping (#5)', async () => {
-    // Worker's STALE_TIMEOUT_MS is 30s and the ping interval is 10s, both
-    // hard-coded. To test cleanly, expose those as config knobs (or a
-    // test-only global) so the test can drive the cleanup in <1s.
+  test('stale port cleanup evicts ports that miss their pings (#5)', async ({ context }) => {
+    // Tab A configures a tight stale timeout AND a long ping interval. The
+    // worker will evict A's port before it can send its first ping. Tab B
+    // (joining second) does not change the worker's timeout — first
+    // handshake wins.
+    const a = await newPlaygroundTab(context, { staleTimeoutMs: 250, pingMs: 60_000 });
+    await waitForTransportConnected(a);
+    const aTabId = await a.evaluate(() => sessionStorage.getItem('tabmesh:tabId:playground-todos'));
+
+    // Tab B uses a short ping interval so it keeps its port alive. A's
+    // pingMs setting is what makes A go stale — they're independent
+    // because pingMs is a tab-local timer.
+    const b = await newPlaygroundTab(context, { staleTimeoutMs: 250, pingMs: 80 });
+    await waitForTransportConnected(b);
+
+    // Wait long enough for the sweeper to run AFTER A's last activity ages
+    // past staleTimeoutMs. Sweep interval = max(timeout/4, 100ms) = 100ms;
+    // worst-case eviction = staleTimeoutMs + sweep_interval.
+    await a.waitForTimeout(700);
+
+    // Now tab B sends a todo. The worker fans out to its remaining ports —
+    // tab A has been evicted, so it should NOT receive the event.
+    await submitTodo(b, 'after-a-was-evicted');
+
+    // Allow round-trip time.
+    await b.waitForTimeout(500);
+
+    const aSawIt = await a.evaluate(() =>
+      Array.from(document.querySelectorAll('.todo-text')).some(
+        (n) => n.textContent === 'after-a-was-evicted'
+      )
+    );
+    const bSawIt = await b.evaluate(() =>
+      Array.from(document.querySelectorAll('.todo-text')).some(
+        (n) => n.textContent === 'after-a-was-evicted'
+      )
+    );
+
+    expect(bSawIt).toBe(true);
+    expect(aSawIt).toBe(false);
+    expect(aTabId).toBeTruthy();
+
+    await a.close();
+    await b.close();
   });
 
   test.fixme('worker-side observation of lifecycle messages (#6)', async () => {
