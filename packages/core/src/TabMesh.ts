@@ -396,7 +396,8 @@ export class TabMesh {
       return new SharedWorkerHub(
         this.config.channelName,
         this.config.workerUrl,
-        this.config.transport
+        this.config.transport,
+        this.config.workerVersion
       );
     }
 

@@ -296,6 +296,25 @@ export interface TabMeshConfig {
    */
   workerUrl?: string;
 
+  /**
+   * Build-time version string (e.g. git SHA, package version) appended to
+   * the SharedWorker `name` so each deploy gets a fresh worker instance.
+   *
+   * Background: SharedWorkers are keyed by their `name` regardless of
+   * script content. Without a version suffix, browsers reuse the existing
+   * worker across deploys until every client tab closes AND the browser
+   * GCs the idle worker — meaning bug fixes can take an unbounded amount
+   * of time to reach users.
+   *
+   * Pass your build's identifier here so a new deploy spawns a new worker
+   * instance the first time a tab loads it. Existing tabs naturally migrate
+   * as they reload.
+   *
+   * @example workerVersion: process.env.GIT_SHA
+   * @example workerVersion: '1.4.2'
+   */
+  workerVersion?: string;
+
   /** Leader election configuration (used only in fallback mode). */
   leader?: Partial<LeaderConfig>;
 

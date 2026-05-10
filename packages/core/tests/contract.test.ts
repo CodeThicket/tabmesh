@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TabMesh } from '../src/TabMesh';
+import { SharedWorkerHub } from '../src/hub/SharedWorkerHub';
 import { EventOutbox } from '../src/storage/EventOutbox';
 import type { Hub, OutboxEntry, TabMeshEvent } from '../src/types';
 
@@ -164,6 +165,51 @@ describe('TabMesh contract', () => {
       await mesh.start();
       await mesh.stop();
       expect(flushOrder).toEqual(['flush', 'disconnect']);
+    });
+  });
+
+  describe('SharedWorker name versioning (cache-busting)', () => {
+    type SharedWorkerArgs = [url: string | URL, options?: { name?: string }];
+    let observedConstructorArgs: SharedWorkerArgs[];
+    let originalSharedWorker: typeof globalThis.SharedWorker | undefined;
+
+    beforeEach(() => {
+      observedConstructorArgs = [];
+      originalSharedWorker = (globalThis as { SharedWorker?: typeof SharedWorker }).SharedWorker;
+      class FakeSharedWorker {
+        port: { onmessage: null; postMessage: () => void; start: () => void; close: () => void };
+        constructor(...args: SharedWorkerArgs) {
+          observedConstructorArgs.push(args);
+          this.port = {
+            onmessage: null,
+            postMessage: () => {},
+            start: () => {},
+            close: () => {},
+          };
+        }
+      }
+      (globalThis as { SharedWorker: unknown }).SharedWorker = FakeSharedWorker;
+    });
+
+    afterEach(() => {
+      (globalThis as { SharedWorker?: unknown }).SharedWorker = originalSharedWorker;
+    });
+
+    it('omits the version suffix when workerVersion is unset', async () => {
+      const hub = new SharedWorkerHub('my-channel');
+      // Fire-and-forget: we only care about the constructor args.
+      hub.connect('tab-1').catch(() => {});
+      await new Promise((r) => setTimeout(r, 0));
+      const [, options] = observedConstructorArgs[0] ?? [];
+      expect(options?.name).toBe('tabmesh:my-channel');
+    });
+
+    it('appends workerVersion to the worker name', async () => {
+      const hub = new SharedWorkerHub('my-channel', undefined, undefined, 'abc123');
+      hub.connect('tab-1').catch(() => {});
+      await new Promise((r) => setTimeout(r, 0));
+      const [, options] = observedConstructorArgs[0] ?? [];
+      expect(options?.name).toBe('tabmesh:my-channel:abc123');
     });
   });
 });
