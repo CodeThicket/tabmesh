@@ -47,3 +47,7 @@ lerna-debug.log*
 test-results/
 playwright-report/
 playwright/.cache/
+
+# VitePress
+docs/.vitepress/cache/
+docs/.vitepress/dist/
