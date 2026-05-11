@@ -21,6 +21,7 @@
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
+    "build:site": "pnpm --filter '@tabmesh/playground^...' build && pnpm --filter @tabmesh/playground build && pnpm docs:build && mkdir -p docs/.vitepress/dist/playground && cp -R packages/playground/dist/. docs/.vitepress/dist/playground/",
     "biome:check": "biome check .",
     "biome:fix": "biome check --apply .",
     "biome:ci": "biome ci .",
