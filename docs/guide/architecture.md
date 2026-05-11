@@ -1,14 +1,104 @@
 # Architecture
 
-::: warning Migrating
-This page is being migrated from the [README architecture section](https://github.com/CodeThicket/tabmesh#architecture). The diagrams and full explainer arrive in the next docs PR.
-:::
+TabMesh is hub-and-spoke. Every tab is a spoke; the hub holds the backend transport and the durable outbox. The hub has two implementations — a `SharedWorker` (primary) and an elected leader tab (fallback) — both behind the same `Hub` interface.
 
-For now, the short version:
+## Primary mode — SharedWorker
 
-- **Primary mode** uses a `SharedWorker` shared across all tabs of the same origin. The worker holds the transport and the IndexedDB outbox. Tabs talk to it over `MessagePort`.
-- **Fallback mode** elects a leader tab via Web Locks API → BroadcastChannel heartbeat → IndexedDB heartbeat. Used when SharedWorker isn't available (some mobile browsers).
-- **Outbox** is IndexedDB-backed with TTL, priority ordering, and an in-memory degraded fallback.
-- **Service Worker** (optional) takes over outbox draining after the last tab closes, via Background Sync.
+```
+┌──────────┐     ┌──────────┐     ┌──────────┐
+│  Tab A   │     │  Tab B   │     │  Tab C   │
+└────┬─────┘     └────┬─────┘     └────┬─────┘
+     │ MessagePort    │ MessagePort    │ MessagePort
+     └────────┬───────┴────────────────┘
+              ▼
+       ┌─────────────┐
+       │ SharedWorker│  ← single point of fan-out + outbox
+       └──────┬──────┘
+              │ WebSocket
+              ▼
+        ┌──────────┐
+        │  backend │
+        └──────────┘
+```
 
-→ See [ADR-0001](/adr/0001-write-through-outbox) and [ADR-0002](/adr/0002-sharedworker-primary-hub) for the design rationale.
+A single `SharedWorker` instance is shared across every tab of the same origin. It:
+
+- Holds the one and only `WebSocket` to the backend.
+- Owns the IndexedDB-backed event outbox.
+- Maintains a registry of connected tab ports.
+- Relays events between tabs via `MessagePort`.
+
+Browser support: Chrome, Edge, Firefox, Safari, iOS Safari 16+.
+
+Why it's the primary path: the browser guarantees one worker instance per `name`, which means leader election, split-brain, and the interregnum problem are eliminated by construction. See [ADR-0002](/adr/0002-sharedworker-primary-hub).
+
+## Fallback mode — elected leader
+
+When `SharedWorker` is unavailable (Chrome Android, Samsung Internet, older browsers), one tab is elected the leader. The leader plays the role the worker would have:
+
+- Holds the WebSocket.
+- Drains the outbox.
+- Broadcasts events to followers via `BroadcastChannel`.
+
+Election uses a layered strategy, picked once at startup based on browser capabilities:
+
+1. **Web Locks API** — sub-50ms failover. Lock is released when the leader tab closes; the next tab waiting on the lock takes over.
+2. **BroadcastChannel heartbeat** — leader broadcasts every 500ms; followers declare candidacy after 1.5s of silence. Failover in ~1–2s.
+3. **IndexedDB heartbeat** — leader writes a timestamp every 2s; tabs race to claim leadership if the timestamp is stale for more than 5s. Failover in ~2–5s.
+
+Split-brain (two tabs both believing they're leader) is resolved by a monotonic `term` number plus `tabId` as a tiebreaker. The lower-priority leader demotes itself and closes its transport.
+
+## The outbox
+
+Every outbound event passes through the IndexedDB outbox before delivery. The flow differs by mode but the contract is identical:
+
+- **Primary**: tab posts to the worker → worker writes to IndexedDB → worker drains to transport + fans out to tabs.
+- **Fallback**: tab writes to IndexedDB directly (write-through) → notifies the leader via `BroadcastChannel` → leader drains.
+
+The outbox supports:
+
+- **TTL** — events past their `createdAt + ttl` are dropped at the next drain.
+- **Priority** — `readPending()` returns events ordered by priority desc, then `createdAt` asc.
+- **Bounded size** — default 1000 events; eviction prefers oldest delivered, then oldest pending.
+- **Degraded mode** — when IndexedDB is unavailable (private browsing on some browsers), an in-memory queue takes over with the same API. The mesh emits a `storage.degraded` system event and logs a warning.
+
+The write-through pattern is non-obvious; see [ADR-0001](/adr/0001-write-through-outbox) for why we picked it over optimistic send.
+
+## Service Worker handoff (optional)
+
+When all tabs close, the `SharedWorker` dies and pending events sit in IndexedDB. The optional Service Worker integration takes over via Background Sync:
+
+1. While tabs are alive, the SW is registered but idle.
+2. When the last tab closes, the browser fires a Background Sync event some time later.
+3. The SW reads pending entries from IndexedDB and POSTs them to a configured `deliveryUrl`.
+4. Successfully delivered entries are removed from the outbox.
+
+This is best-effort and browser-dependent. It requires `serviceWorker.deliveryUrl` to be set — without it, the SW leaves entries in the outbox for the next Hub session (see the [SW handoff gotcha](./gotchas#service-worker-handoff-requires-deliveryurl)).
+
+## Inbound event flow
+
+```
+backend → WebSocket → Hub → all connected tabs
+```
+
+The Hub does **not** write inbound events to the outbox — persistence is the backend's responsibility. There's no replay buffer for late-joining tabs. New tabs start with a clean slate and fetch state from your backend if they need it.
+
+The Hub deduplicates server echoes of locally-sent events (the SharedWorker remembers `id`s it forwarded, and drops bounce-backs). See [ADR-0003](/adr/0003-distribute-prebuilt-worker-bundles) for context on related bundling concerns.
+
+## Identity
+
+- **Tab ID**: 8 hex chars from `crypto.getRandomValues()`, stored in `sessionStorage` so it survives reloads.
+- **Event ID**: `{tabId}-{monotonicCounter}`. Cheap to generate, unique within a channel, sortable per-tab. Generated by the sending tab at `mesh.send()` time.
+- **Channel name**: scopes the SharedWorker instance, the IndexedDB database, the BroadcastChannel, and the `sessionStorage` keys. Two meshes on the same origin with different `channelName` are independent.
+
+## Boundary — what TabMesh is and isn't
+
+- **It is**: a coordination layer for the same-origin multi-tab problem. Hub-and-spoke. Browser-side.
+- **It isn't**: cross-origin (browser platform constraint), peer-to-peer (we tried, hub wins), or a state management library (it moves events; you decide how to react).
+
+## Further reading
+
+- [`CONTEXT.md`](https://github.com/CodeThicket/tabmesh/blob/main/CONTEXT.md) — domain language, glossary, and design notes
+- [ADR-0001](/adr/0001-write-through-outbox) — why write-through and not optimistic
+- [ADR-0002](/adr/0002-sharedworker-primary-hub) — why SharedWorker is the primary path
+- [ADR-0003](/adr/0003-distribute-prebuilt-worker-bundles) — why we ship pre-built worker bundles
